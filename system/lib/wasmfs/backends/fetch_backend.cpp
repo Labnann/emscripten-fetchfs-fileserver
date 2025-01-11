@@ -10,6 +10,7 @@
 #include "backend.h"
 #include "proxied_async_js_impl_backend.h"
 #include "wasmfs.h"
+#include <emscripten/fetch.h>
 
 namespace wasmfs {
 
@@ -58,6 +59,79 @@ public:
   std::string getChildPath(const std::string& name) const {
     return dirPath + '/' + name;
   }
+
+
+  int isDirectory(emscripten_fetch_t* fetch) {
+    // Check if the server provided a 'Content-Type' header.
+    size_t header_length = emscripten_fetch_get_response_headers_length(fetch);
+    char* header_string = (char*) malloc(header_length + 1);
+  
+    emscripten_fetch_get_response_headers(fetch, header_string, header_length+1);
+
+    char** header_array = emscripten_fetch_unpack_response_headers(header_string);
+
+
+    for (int i = 0; header_array[i]; i+=2){
+      printf("h:: %s : %s \n", header_array[i], header_array[i+1]);
+      if(!strcmp(header_array[i], "content-type" )) {
+        if (!strcmp(header_array[i+1], "text/html")) {
+          printf("found a directory\n");
+          return true;
+        }
+        printf("not a directory: %s \n", fetch->url);
+        return false;
+      }
+    }
+
+    printf("failed to find content-type header\n");
+    return 0;
+
+    /*
+    //const char* contentType = fetch->headers["Content-Type"].c_str();
+    if (contentType != nullptr) {
+        // If the Content-Type is text/html, it's likely an HTML page (could be a directory listing).
+        if (strstr(contentType, "text/html") != nullptr) {
+            return true;  // It's a directory or an HTML page.
+        }
+    }*/ 
+  }
+
+  std::shared_ptr<File> getChild(const std::string& name) override {
+    auto child = MemoryDirectory::getChild(name);
+    if (child != nullptr) return child;
+    printf("fetch_backend: new impl: %s\n", getChildPath(name).c_str());
+    //////
+    emscripten_fetch_attr_t attr;
+    emscripten_fetch_attr_init(&attr);
+    strcpy(attr.requestMethod, "HEAD");
+    attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY | EMSCRIPTEN_FETCH_SYNCHRONOUS;
+    attr.timeoutMSecs = 20;
+    emscripten_fetch_t *fetch = emscripten_fetch(&attr, getChildPath(name).c_str()); // Blocks here until the operation is complete.
+    if (fetch->status == 404) {
+      printf("Downloading %s failed, HTTP failure status code: %d.\n", fetch->url, fetch->status);
+      emscripten_fetch_close(fetch);
+      return nullptr;
+    }
+
+    printf("Finished downloading %llu bytes from URL %s.\n", fetch->numBytes, fetch->url);
+
+    if (isDirectory(fetch)){
+      printf("fetch_new_backend: newdir: %s\n", name.c_str());
+      auto newChild = insertDirectory(name, mode);
+      return newChild;
+    }
+    emscripten_fetch_close(fetch);
+
+    auto newChild = insertDataFile(name, mode);
+    int fsize = newChild->locked().getSize();
+    printf("fetchbackend: search: %s, size: %d\n", name.c_str(), fsize);
+
+    if (fsize == 0) return nullptr;
+
+    return newChild;;
+    /////
+  }
+  
 };
 
 class FetchBackend : public ProxiedAsyncJSBackend {

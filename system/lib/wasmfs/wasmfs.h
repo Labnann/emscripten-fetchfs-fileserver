@@ -45,11 +45,13 @@ public:
   std::shared_ptr<Directory> getRootDirectory() { return rootDirectory; };
 
   std::shared_ptr<Directory> getCWD() {
+    printf("getcwd operation\n");
     const std::lock_guard<std::mutex> lock(mutex);
     return cwd;
   };
 
   void setCWD(std::shared_ptr<Directory> directory) {
+    printf("setcwd operation\n");
     const std::lock_guard<std::mutex> lock(mutex);
     cwd = directory;
   };

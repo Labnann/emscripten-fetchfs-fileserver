@@ -9,6 +9,9 @@
 #include "paths.h"
 #include "wasmfs.h"
 
+
+#include <iostream>
+
 namespace wasmfs::path {
 
 namespace {
@@ -21,14 +24,18 @@ ParsedFile doParseFile(std::string_view path,
                        size_t& recursions);
 
 ParsedFile getBaseDir(__wasi_fd_t basefd) {
+  std::cout << "getBaseDir: \n";
   if (basefd == AT_FDCWD) {
+    printf("basefd is same as cwd\n");
     return {wasmFS.getCWD()};
   }
+  printf("basefd is not in cwd, looking for proper openfile\n");
   auto openFile = wasmFS.getFileTable().locked().getEntry(basefd);
   if (!openFile) {
     return -EBADF;
   }
   if (auto baseDir = openFile->locked().getFile()->dynCast<Directory>()) {
+    printf("Dynamic cast to get directory?\n");
     return {baseDir};
   }
   return -ENOTDIR;
@@ -102,6 +109,7 @@ ParsedParent doParseParent(std::string_view path,
     // Try to descend into the child segment.
     // TODO: Check permissions on intermediate directories.
     auto segment = path.substr(0, segment_end);
+    std::cout << "child parse: " << segment << std::endl;
     auto child = getChild(curr, segment, FollowLinks, recursions);
     if (auto err = child.getError()) {
       return err;
@@ -135,6 +143,7 @@ ParsedParent parseParent(std::string_view path, __wasi_fd_t basefd) {
   }
   size_t recursions = 0;
   auto baseDir = base.getFile()->cast<Directory>();
+  std::cout << "parseparent: " << path <<"\n";
   return doParseParent(path, baseDir, recursions);
 }
 

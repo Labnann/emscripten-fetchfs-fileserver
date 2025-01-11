@@ -33,6 +33,7 @@ std::shared_ptr<OpenFileState> FileTable::Handle::getEntry(__wasi_fd_t fd) {
 std::shared_ptr<DataFile>
 FileTable::Handle::setEntry(__wasi_fd_t fd,
                             std::shared_ptr<OpenFileState> openFile) {
+  printf("set entry- fd: %d\n", fd);
   assert(fd >= 0);
   if (fd >= fileTable.entries.size()) {
     fileTable.entries.resize(fd + 1);

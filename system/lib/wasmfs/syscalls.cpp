@@ -35,6 +35,12 @@
 #include "special_files.h"
 #include "wasmfs.h"
 
+
+
+
+#include <cstdio>
+#include <iostream>
+
 // File permission macros for wasmfs.
 // Used to improve readability compared to those in stat.h
 #define WASMFS_PERM_READ 0444
@@ -448,6 +454,8 @@ static __wasi_fd_t doOpen(path::ParsedParent parsed,
   {
     auto lockedParent = parent->locked();
     child = lockedParent.getChild(std::string(childName));
+    std::cout << "child name: " << childName << "\n";    
+    
     // The requested node was not found.
     if (!child) {
       // If curr is the last element and the create flag is specified

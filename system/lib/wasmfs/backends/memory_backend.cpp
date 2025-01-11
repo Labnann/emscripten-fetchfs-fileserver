@@ -39,6 +39,7 @@ ssize_t MemoryDataFile::read(uint8_t* buf, size_t len, off_t offset) {
 std::vector<MemoryDirectory::ChildEntry>::iterator
 MemoryDirectory::findEntry(const std::string& name) {
   return std::find_if(entries.begin(), entries.end(), [&](const auto& entry) {
+    printf("memory_backend: find: input %s, match with %s\n", entry.name.c_str(), name.c_str());
     return entry.name == name;
   });
 }
@@ -47,6 +48,8 @@ std::shared_ptr<File> MemoryDirectory::getChild(const std::string& name) {
   if (auto entry = findEntry(name); entry != entries.end()) {
     return entry->child;
   }
+
+  printf("memory_backend: failed to match %s\n", name.c_str());
   return nullptr;
 }
 

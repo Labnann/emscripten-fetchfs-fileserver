@@ -54,6 +54,7 @@ void Directory::Handle::cacheChild(const std::string& name,
 
 std::shared_ptr<File> Directory::Handle::getChild(const std::string& name) {
   // Unlinked directories must be empty, without even "." or ".."
+  printf("findchild: parentDir: %s/ child: %s\n", getName(file).c_str(), name.c_str() );
   if (!getParent()) {
     return nullptr;
   }
