@@ -55,7 +55,8 @@ class FetchDirectory : public MemoryDirectory {
   }
 
   // Function to process the fetch response and print file info
-  void processFetchResponse(const std::string& url) {
+  void createDirectoryStructure() {
+    if (fetched) return;
     // Prepare fetch request attributes
     emscripten_fetch_attr_t fetchAttributes;
     emscripten_fetch_attr_init(&fetchAttributes);
@@ -64,7 +65,7 @@ class FetchDirectory : public MemoryDirectory {
     fetchAttributes.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY | EMSCRIPTEN_FETCH_SYNCHRONOUS;
 
     // Perform the fetch request synchronously
-    emscripten_fetch_t* fetchData = emscripten_fetch(&fetchAttributes, url.c_str());
+    emscripten_fetch_t* fetchData = emscripten_fetch(&fetchAttributes, dirPath.c_str());
 
     // Check if the fetch was successful
     if (fetchData->status == 404) {
@@ -110,10 +111,13 @@ class FetchDirectory : public MemoryDirectory {
 
         if (kind == DataFileKind)
           insertDataFile(linkName, mode);
+        else 
+          insertDirectory(linkName, mode);
 
     }
   }
 
+  bool fetched = false;
 
 public:
   FetchDirectory(const std::string& path,
@@ -124,9 +128,17 @@ public:
 
     //createUnfetchedEntries(dirPath);
     std::cout << "path: " << path << " - " "dirpath: " <<dirPath << "\n";
-    processFetchResponse(dirPath);
+    createDirectoryStructure();
+    fetched = true;
 
 
+  }
+
+  FetchDirectory(const std::string& path,
+                 mode_t mode,
+                 backend_t backend,
+                 emscripten::ProxyWorker& proxy, bool willNotfetch)
+    : MemoryDirectory(mode, backend), dirPath(path), proxy(proxy) {
   }
 
   std::shared_ptr<DataFile> insertDataFile(const std::string& name,
@@ -142,7 +154,7 @@ public:
                                              mode_t mode) override {
     auto childPath = getChildPath(name);
     auto childDir =
-      std::make_shared<FetchDirectory>(childPath, mode, getBackend(), proxy);
+      std::make_shared<FetchDirectory>(childPath, mode, getBackend(), proxy, true);
     insertChild(name, childDir);
     return childDir;
   }
@@ -151,20 +163,20 @@ public:
     return dirPath + '/' + name;
   }
 
-  bool isDirectory(std::string name) {
+  bool isDirectory(const std::string &name) {
     return pseudo_entries[name].kind == DirectoryKind;
   }
 
 
-  bool isFetched(std::string name) {
+  bool isFetched (const std::string &name) {
     return pseudo_entries[name].fetched;
   }
 
-  bool exists(std::string name) {
+  bool exists(const std::string &name) {
     return pseudo_entries.find(name) != pseudo_entries.end();
   }
 
-  std::shared_ptr<File> fetchChild(std::string name) {
+  std::shared_ptr<File> fetchChild(const std::string &name) {
     auto child = MemoryDirectory::getChild(name);
     size_t size = child->locked().getSize();
     pseudo_entries[name].fetched = true;
@@ -173,11 +185,11 @@ public:
     return child;
   }
 
-  std::shared_ptr<Directory> fetchInsertChildDirectory(std::string name, mode_t mode) {
-    auto newChild = insertDirectory(name, mode);
-    printf("fetchbackend: newdir fetch: %s\n", name.c_str());
+  std::shared_ptr<Directory> fetchChildDirectory(std::string name, mode_t mode) {
+    auto child = std::static_pointer_cast<FetchDirectory>(MemoryDirectory::getChild(name));
+    child->createDirectoryStructure();
     pseudo_entries[name].fetched = true;
-    return newChild;
+    return child;
   }
 
   std::shared_ptr<File> getChild(const std::string& name) override {
@@ -187,22 +199,12 @@ public:
     if (isFetched(name))
       return MemoryDirectory::getChild(name);
 
-//    auto child = MemoryDirectory::getChild(name);
-//    if (child != nullptr) return child;
-//    printf("fetch_backend: new impl: %s\n", getChildPath(name).c_str());
-
     if (isDirectory(name)){
-      return fetchInsertChildDirectory(name, mode);
+      return fetchChildDirectory(name, mode);
     }
 
-    /////
-
-    auto newChild = fetchChild(name);
-
-    return newChild;;
-    
+    return fetchChild(name);
   }
-  
 };
 
 class FetchBackend : public ProxiedAsyncJSBackend {
