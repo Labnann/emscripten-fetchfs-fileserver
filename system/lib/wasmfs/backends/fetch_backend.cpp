@@ -63,6 +63,9 @@ class FetchDirectory : public MemoryDirectory {
     
     // Set flags for loading data to memory and synchronous fetch
     fetchAttributes.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY | EMSCRIPTEN_FETCH_SYNCHRONOUS;
+    fetchAttributes.timeoutMSecs = 10;
+    strcpy(fetchAttributes.requestMethod, "GET");
+
 
     // Perform the fetch request synchronously
     emscripten_fetch_t* fetchData = emscripten_fetch(&fetchAttributes, dirPath.c_str());
@@ -110,13 +113,14 @@ class FetchDirectory : public MemoryDirectory {
         searchStart = match.suffix().first;
 
         mode_t regularMode = S_IFREG | S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
-
         if (kind == DataFileKind)
           insertDataFile(linkName,  regularMode);
         else 
           insertDirectory(linkName, mode | S_IFDIR);
 
     }
+    fetched = true;
+    emscripten_fetch_close(fetchData);
   }
 
   bool fetched = false;
@@ -131,7 +135,6 @@ public:
     //createUnfetchedEntries(dirPath);
     std::cout << "path: " << path << " - " "dirpath: " <<dirPath << "\n";
     createDirectoryStructure();
-    fetched = true;
 
 
   }
