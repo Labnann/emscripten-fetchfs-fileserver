@@ -60,6 +60,7 @@ def main(args):
   args = parser.parse_args()
 
   for name, deps, cmd in actions:
+    print ("action: ", name, deps, cmd)
     if check_deps(name, deps):
       print('Up-to-date: %s' % name)
       continue

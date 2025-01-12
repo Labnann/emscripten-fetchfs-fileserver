@@ -11,6 +11,8 @@
 #include "proxied_async_js_impl_backend.h"
 #include "wasmfs.h"
 #include <emscripten/fetch.h>
+#include <regex>
+#include <iostream>
 
 namespace wasmfs {
 
@@ -27,16 +29,105 @@ public:
   const std::string& getPath() const { return filePath; }
 };
 
+
 class FetchDirectory : public MemoryDirectory {
+
+  struct PseudoEntry {
+    bool fetched = false;
+    FileKind kind;
+    std::string name;
+  };
+
+  std::map<std::string, PseudoEntry> pseudo_entries;
+
+
+
   std::string dirPath;
   emscripten::ProxyWorker& proxy;
+
+  const char* fileKindToString(FileKind kind) {
+    switch (kind) {
+      case DataFileKind: return "file";
+      case DirectoryKind: return "directory";
+      case SymlinkKind: return "symlink";
+      default: return "unknown";
+    }
+  }
+
+  // Function to process the fetch response and print file info
+  void processFetchResponse(const std::string& url) {
+    // Prepare fetch request attributes
+    emscripten_fetch_attr_t fetchAttributes;
+    emscripten_fetch_attr_init(&fetchAttributes);
+    
+    // Set flags for loading data to memory and synchronous fetch
+    fetchAttributes.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY | EMSCRIPTEN_FETCH_SYNCHRONOUS;
+
+    // Perform the fetch request synchronously
+    emscripten_fetch_t* fetchData = emscripten_fetch(&fetchAttributes, url.c_str());
+
+    // Check if the fetch was successful
+    if (fetchData->status == 404) {
+        printf("fetchfs: createdir: fetch %s failed: 404", fetchData->url);
+        return;
+    }
+
+    // Convert the fetched data into a string
+    std::string responseText(fetchData->data, fetchData->numBytes);
+
+    // Use a regular expression to find all href attributes in the HTML response
+    std::regex linkRegex(R"(<a\s+href="([^"]+)\">([^<]+)</a>)");
+    std::smatch match;
+
+    // Search for links in the HTML response
+    std::string::const_iterator searchStart(responseText.cbegin());
+    while (std::regex_search(searchStart, responseText.cend(), match, linkRegex)) {
+        // Extract href and the visible name
+        std::string href = match[1];
+        std::string linkName = match[2];
+
+        // Assuming if the href ends with a "/" it's a directory, otherwise it's a file
+        FileKind kind = href.back() == '/' ? DirectoryKind : DataFileKind;
+
+        // Remove trailing slash if it exists in the name
+        if (!linkName.empty() && linkName.back() == '/') {
+            linkName.erase(linkName.size() - 1);
+        }
+
+        // Print the file or directory info
+        std::cout << "kind: " << fileKindToString(kind) << " name: " << linkName << std::endl;
+
+        // Create a PseudoEntry for the current link
+        PseudoEntry entry;
+        entry.name = linkName;
+        entry.kind = kind;
+
+        // Add the entry to the map
+        pseudo_entries[linkName] = entry;
+
+        // Move to the next match
+        searchStart = match.suffix().first;
+
+
+        insertDataFile(linkName, mode);
+
+    }
+  }
+
 
 public:
   FetchDirectory(const std::string& path,
                  mode_t mode,
                  backend_t backend,
                  emscripten::ProxyWorker& proxy)
-    : MemoryDirectory(mode, backend), dirPath(path), proxy(proxy) {}
+    : MemoryDirectory(mode, backend), dirPath(path), proxy(proxy) {
+
+    //createUnfetchedEntries(dirPath);
+    std::cout << "path: " << path << " - " "dirpath: " <<dirPath << "\n";
+    processFetchResponse(dirPath);
+
+
+  }
 
   std::shared_ptr<DataFile> insertDataFile(const std::string& name,
                                            mode_t mode) override {
@@ -60,76 +151,56 @@ public:
     return dirPath + '/' + name;
   }
 
-
-  int isDirectory(emscripten_fetch_t* fetch) {
-    // Check if the server provided a 'Content-Type' header.
-    size_t header_length = emscripten_fetch_get_response_headers_length(fetch);
-    char* header_string = (char*) malloc(header_length + 1);
-  
-    emscripten_fetch_get_response_headers(fetch, header_string, header_length+1);
-
-    char** header_array = emscripten_fetch_unpack_response_headers(header_string);
+  bool isDirectory(std::string name) {
+    return pseudo_entries[name].kind == DirectoryKind;
+  }
 
 
-    for (int i = 0; header_array[i]; i+=2){
-      printf("h:: %s : %s \n", header_array[i], header_array[i+1]);
-      if(!strcmp(header_array[i], "content-type" )) {
-        if (!strcmp(header_array[i+1], "text/html")) {
-          printf("found a directory\n");
-          return true;
-        }
-        printf("not a directory: %s \n", fetch->url);
-        return false;
-      }
-    }
+  bool isFetched(std::string name) {
+    return pseudo_entries[name].fetched;
+  }
 
-    printf("failed to find content-type header\n");
-    return 0;
+  bool exists(std::string name) {
+    return pseudo_entries.find(name) != pseudo_entries.end();
+  }
 
-    /*
-    //const char* contentType = fetch->headers["Content-Type"].c_str();
-    if (contentType != nullptr) {
-        // If the Content-Type is text/html, it's likely an HTML page (could be a directory listing).
-        if (strstr(contentType, "text/html") != nullptr) {
-            return true;  // It's a directory or an HTML page.
-        }
-    }*/ 
+  std::shared_ptr<File> fetchChild(std::string name) {
+    auto child = MemoryDirectory::getChild(name);
+    size_t size = child->locked().getSize();
+    pseudo_entries[name].fetched = true;
+    printf("fetchbackend: search: %s, size: %zu\n", name.c_str(), size);
+
+    return child;
+  }
+
+  std::shared_ptr<Directory> fetchInsertChildDirectory(std::string name, mode_t mode) {
+    auto newChild = insertDirectory(name, mode);
+    printf("fetchbackend: newdir fetch: %s\n", name.c_str());
+    pseudo_entries[name].fetched = true;
+    return newChild;
   }
 
   std::shared_ptr<File> getChild(const std::string& name) override {
-    auto child = MemoryDirectory::getChild(name);
-    if (child != nullptr) return child;
-    printf("fetch_backend: new impl: %s\n", getChildPath(name).c_str());
-    //////
-    emscripten_fetch_attr_t attr;
-    emscripten_fetch_attr_init(&attr);
-    strcpy(attr.requestMethod, "HEAD");
-    attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY | EMSCRIPTEN_FETCH_SYNCHRONOUS;
-    attr.timeoutMSecs = 20;
-    emscripten_fetch_t *fetch = emscripten_fetch(&attr, getChildPath(name).c_str()); // Blocks here until the operation is complete.
-    if (fetch->status == 404) {
-      printf("Downloading %s failed, HTTP failure status code: %d.\n", fetch->url, fetch->status);
-      emscripten_fetch_close(fetch);
+    if (!exists(name))
       return nullptr;
+
+    if (isFetched(name))
+      return MemoryDirectory::getChild(name);
+
+//    auto child = MemoryDirectory::getChild(name);
+//    if (child != nullptr) return child;
+//    printf("fetch_backend: new impl: %s\n", getChildPath(name).c_str());
+
+    if (isDirectory(name)){
+      return fetchInsertChildDirectory(name, mode);
     }
 
-    printf("Finished downloading %llu bytes from URL %s.\n", fetch->numBytes, fetch->url);
+    /////
 
-    if (isDirectory(fetch)){
-      printf("fetch_new_backend: newdir: %s\n", name.c_str());
-      auto newChild = insertDirectory(name, mode);
-      return newChild;
-    }
-    emscripten_fetch_close(fetch);
-
-    auto newChild = insertDataFile(name, mode);
-    int fsize = newChild->locked().getSize();
-    printf("fetchbackend: search: %s, size: %d\n", name.c_str(), fsize);
-
-    if (fsize == 0) return nullptr;
+    auto newChild = fetchChild(name);
 
     return newChild;;
-    /////
+    
   }
   
 };
