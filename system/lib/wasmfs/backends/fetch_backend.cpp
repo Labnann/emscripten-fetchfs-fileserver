@@ -109,10 +109,12 @@ class FetchDirectory : public MemoryDirectory {
         // Move to the next match
         searchStart = match.suffix().first;
 
+        mode_t regularMode = S_IFREG | S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
+
         if (kind == DataFileKind)
-          insertDataFile(linkName, mode);
+          insertDataFile(linkName,  regularMode);
         else 
-          insertDirectory(linkName, mode);
+          insertDirectory(linkName, mode | S_IFDIR);
 
     }
   }
@@ -185,7 +187,7 @@ public:
     return child;
   }
 
-  std::shared_ptr<Directory> fetchChildDirectory(std::string name, mode_t mode) {
+  std::shared_ptr<Directory> fetchChildDirectory(std::string name) {
     auto child = std::static_pointer_cast<FetchDirectory>(MemoryDirectory::getChild(name));
     child->createDirectoryStructure();
     pseudo_entries[name].fetched = true;
@@ -200,7 +202,7 @@ public:
       return MemoryDirectory::getChild(name);
 
     if (isDirectory(name)){
-      return fetchChildDirectory(name, mode);
+      return fetchChildDirectory(name);
     }
 
     return fetchChild(name);
