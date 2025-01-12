@@ -108,8 +108,8 @@ class FetchDirectory : public MemoryDirectory {
         // Move to the next match
         searchStart = match.suffix().first;
 
-
-        insertDataFile(linkName, mode);
+        if (kind == DataFileKind)
+          insertDataFile(linkName, mode);
 
     }
   }
